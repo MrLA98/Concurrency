@@ -52,8 +52,8 @@
 //     thread myThread(lambda3);
 
 //     // ---------类对象的函数指针--------
-//     DoSomething obj1(10);
-//     thread(&DoSomething::thread_func, obj1);
+//     // DoSometing obj1(10);
+//     // thread mythread2(&DoSometing::thread_func, obj1);
 
 //     // -------------join-------------
 //     // 加入/汇合，阻塞
