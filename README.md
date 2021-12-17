@@ -70,9 +70,36 @@
   - `myMutex.lock()` 上锁
   - `myMutex.unlock()` 解锁
 - 一个互斥量在某个线程被锁上，另一个线程就会在锁处等待，直至第一个线程解锁
-- 防止忘了解锁：使用`std::lock_gaurd<mutex> l1(myMutex)` 
+- 防止忘了解锁，使用`std::lock_gaurd<mutex> l1(myMutex)` 
   - 在这句命令时，上锁，结束一个作用域时，自动解锁
   - 可以使用`{}`来控制解锁时机
+  - RAII类 -- `resource acquisition is initialization` -- 资源获取即初始化，析构自动释放资源
+
+#### 2.1.1 独占互斥量
+
+- mutex又称为独占互斥量，自己lock的时候别人lock不了
+- 是最常用的
+
+#### 2.1.2 递归互斥量
+
+- `recursive_mutex` -- 递归互斥量
+- 可以让同一个线程，统一互斥量多次被lock
+  - 比如在一个互斥量上锁后的代码段里调用了一个函数，而在函数内又对同一互斥量上锁了，就不会报异常
+
+- 但一般来讲，其效率更低，一般都有优化空间
+
+#### 2.1.3 带超时功能的互斥量
+
+- `timed_mutex` -- 独占的
+- `recursive_timed_mutex` -- 递归的
+- 成员方法
+  - 声明：`timed_mutex tMut;`
+  - 等待一段时间，拿不到锁就返回false
+    - `tMut.try_lock_for(time1)`
+    - 时间:`std::chrono::seconds(4)`
+  - 等待到一个时间点，拿不到锁就返回false
+    - `tMut.try_lock_until(time2);`
+    - 时间:`std::chrono::steedy_clock::now()+time1`
 
 ### 2.2 死锁及其预防
 - 当有多个锁需要同时上锁，且在多个位置以不同顺序上锁时，就可能会产生死锁
@@ -216,6 +243,9 @@ void thread_func2()
 }
 ```
 - 如果有多个正在wait的线程，`notify_one()` 只能随机唤醒一个。如果希望唤醒多个，则需要使用 `notify_all()` 函数。
+- 虚假唤醒 -- 不满足条件被唤醒或被多次唤醒
+  - 需要条件变量里的lambda表达式来确保条件满足
+
 
 ## 3. future 类
 > 以下方法和类都在头文件`<future>`里
@@ -246,16 +276,22 @@ void thread_func2()
 > std::shared_future<int> myFu_s(pkt.get_future());
 > ```
 ### 3.1 用 `std::async()` 返回future对象
-__两种使用方法：__
+__四种使用方法：__
 - `future<int> fu = async(func, para...)`
-  - 直接从一个函数启动线程，输入参数
+  - 不使用第一个参数 == 第一个参数为`any`
+    - `any = async｜deferrd` 表示系统自动选择那种方式
+    - 如果资源紧张就选择deferred；否则选择async
+  
+  - 用这个函数来绑定异步任务
+  
 - `future<int> fu = async(std::launch::async,func, para...)`
   - 从这句开始直接启动线程
+    - 属于强制创建线程，如果系统资源紧张，有可能会崩溃
   - 在 `fu.get()` 或 `fu.wait()` 处等待线程结束
   - 如果没有，则在主线程`return 0;`处等待线程结束
 - `future<int> fu = async(std::launch::deferred,func, para...)`
   - 在 `fu.get()` 或 `fu.wait()` 处才开始线程，没有就不执行
-  - 而且实际上是在主线程中执行
+  - 而且实际上是在 `fu.get()` 或 `fu.wait()` 所在线程处调用`func`
 
 ### 3.2 future对象的方法
 - `int res = fu.get()` 
@@ -305,7 +341,7 @@ int res = fu.get();
 - 且`get_future()` 只能执行一次
 
 ### 3.5 future_statues 枚举类
-- 首先说明，线程是用 _9.1_ 的 `async()` 方法创建的
+- 首先说明，线程是用 _3.1_ 的 `async()` 方法创建的
 - 其次说明，这是future对象的成员方法 -- `fu.wait_for(time);` 的返回类型，有且只有一下三种情况：
   - `std::future_status::timeout`
     - 执行时间 > time时返回
@@ -316,6 +352,7 @@ int res = fu.get();
     - 表示创建线程时使用的 `async(std::launch::deferred, fucn)`
     - 等待get/wait才开启线程，否则不开启
 - 最后，time的类型是 `std::chrono::seconds(t)` -- 表示t秒
+- 补充，可以用`fu.wait_for(std::chrono::seconds(0))`来获取无参`async()`是否选择了deferred方式(系统资源紧张)
 
 ### 3.6 shared_future 类
 - 从`future`对象构造
@@ -332,3 +369,124 @@ int res = fu.get();
     - 从promise构造
   - 算是自动类型转换
 - 新对象 `myFu_s.get()` 使用多少次都可以，以为是拷贝，而不是移动
+
+## 4. 原子变量
+
+> 头文件`<atomic>`
+>
+> 主要内容：
+>
+> ```cpp
+> std::atomic<int> val = 0;
+> std::atomic<bool> flag = false;
+> std::atomic<int> val2 = val.load();
+> val.store(34);
+> ```
+
+- 原子操作
+  - 多线程中不会被打断的程序片段，即某个操作：
+    - 要么是完成状态，要么是未完成状态，不会出现中间状态
+  - 即使其汇编语句有很多行，也要保证：
+    - 要么一行没执行，要么全部执行完成，中间不能被打断
+
+- 原子变量
+  - `std::atomic<int> val = 0;`
+  - 则val就是原子变量，其 _直接操作_ 都是原子操作，不会被其他线程打断
+    - 直接操作：++、--、+=、-=、&=......
+    - 但如：`val = val + 1` 就不是原子操作，会被别的线程打断
+    - 但例如：`cout << val << endl` 虽然不是原子操作，但是不影响读到atm值。只是说打印时，值可能已经变了
+  - 因此，在对原子变量进行操作时，可以不考虑汇编层面的冲突
+- 与互斥量的区别：
+  - 互斥量属于有锁编程，一般对一大段代码上锁来实现对共享数据操作
+  - 原子操作属于无锁编程，一般针对某一变量的直接操作
+- 原子变量不允许赋值和拷贝构造，没有拷贝构造函数和拷贝复制运算符
+  - 但如果只是想得到或写入值，可以用：
+    - `atomic<int> atm2 = atm.load()`
+    - `atm2.store(12);`
+
+## 5. 其他内容
+
+### 5.1 Windows临界区
+
+- 代码示例
+
+```cpp
+#include <windows.h>
+using namespace std;
+#define __WINDOWSJQ_
+
+#ifdef __WINDOWSJQ_
+	CRITICLA_SECTION my_winsec // 临界区
+#endif
+
+class A{
+public:
+    A();
+    void InMsg();
+    void OutMsg();
+private:
+    shared_data sData;
+};      
+
+A::A(){
+#ifdef __WINDOWSJQ_
+    // 临界区初始化
+	InitializeCriticalSection(&my_winsec); 
+#endif    
+}
+
+void A::InMsg(){
+#ifdef __WINDOWSJQ_
+    // 进入临界区～=上锁
+	EnterCriticalSection(&my_winsec);
+    // 处理共享数据
+    sData.msgIn();
+    // 离开临界区～=解锁
+    LeaveCriticalSection(&my_winsec);
+#endif    
+}
+
+void A::OutMsg(){
+#ifdef __WINDOWSJQ_
+    int msg;
+    // 进入临界区～=上锁
+	EnterCriticalSection(&my_winsec);
+    // 处理共享数据
+    msg = sData.msgOut();
+    // 离开临界区～=解锁
+    LeaveCriticalSection(&my_winsec);
+#endif 
+}
+```
+
+- 同一变量在同一线程中
+  - 可以多次进入临界区、多次离开
+  - 但进入次数要等于离开次数
+  - 但c++11中的mutex是不允许重复上锁的
+
+### 5.2 线程池
+
+#### 5.2.1 服务器程序：
+
+- 一般模式：
+  - 每来一个客户端，就创建一个线程为客户服务（人少）
+- 存在问题：
+  - 线程数目太多会导致系统资源枯竭
+    - 极限是2000，多了就崩
+    - 一些技术建议是cpu数量、cpu数量*2等
+    - 有时候需要和业务具体联系来确定数量
+    - 线程太多远远满足需求，调度消耗会导致效率降低
+    - 一般来讲不要超过500个，最好控制在200内
+  - 线程数目(频繁创建和销毁)大量变动，不稳定
+
+#### 5.2.2 线程池方法
+
+- 特点：
+  - 线程数量少，变动小
+
+- 统一管理：
+  - 用的时候从池子里拿
+  - 用完再放回去
+  - 不销毁线程
+- 实现方式：
+  - 程序启动时，一次性创建好一定数量的线程
